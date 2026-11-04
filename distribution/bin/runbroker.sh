@@ -113,10 +113,10 @@ numactl --interleave=all pwd > /dev/null 2>&1
 if [ $? -eq 0 ]
 then
 	if [ -z "$RMQ_NUMA_NODE" ] ; then
-		numactl --interleave=all $JAVA ${JAVA_OPT} $@
+		exec numactl --interleave=all $JAVA ${JAVA_OPT} $@
 	else
-		numactl --cpunodebind=$RMQ_NUMA_NODE --membind=$RMQ_NUMA_NODE $JAVA ${JAVA_OPT} $@
+		exec numactl --cpunodebind=$RMQ_NUMA_NODE --membind=$RMQ_NUMA_NODE $JAVA ${JAVA_OPT} $@
 	fi
 else
-	"$JAVA" ${JAVA_OPT} $@
+	exec "$JAVA" ${JAVA_OPT} $@
 fi
