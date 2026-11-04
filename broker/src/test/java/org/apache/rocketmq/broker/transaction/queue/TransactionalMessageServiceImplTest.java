@@ -58,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -171,6 +172,46 @@ public class TransactionalMessageServiceImplTest {
         assertThat(res).isTrue();
         verify(bridge, timeout(3000)).writeOp(any(Integer.class), any(Message.class));
         queueTransactionMsgService.close();
+    }
+
+    @Test
+    public void testBatchSendOpMessage_drainedContextSleepsAndAcceptsNewOffsets() {
+        queueTransactionMsgService.close();
+        TransactionalMessageServiceImpl service = (TransactionalMessageServiceImpl) queueTransactionMsgService;
+        MessageQueueOpContext context = new MessageQueueOpContext(0, 1);
+        service.getDeleteContext().put(0, context);
+        long interval = brokerController.getBrokerConfig().getTransactionOpBatchInterval();
+
+        long before = System.currentTimeMillis();
+        assertThat(service.batchSendOpMessage()).isGreaterThanOrEqualTo(before + interval);
+        verify(bridge, never()).writeOp(any(Integer.class), any(Message.class));
+
+        when(bridge.writeOp(any(Integer.class), any(Message.class))).thenReturn(true);
+        assertThat(service.deletePrepareMessage(createMessageBrokerInner())).isTrue();
+        service.batchSendOpMessage();
+        verify(bridge).writeOp(any(Integer.class), any(Message.class));
+        assertThat(context.getContextQueue()).isEmpty();
+        assertThat(context.getTotalSize().get()).isZero();
+
+        before = System.currentTimeMillis();
+        assertThat(service.batchSendOpMessage()).isGreaterThanOrEqualTo(before + interval);
+    }
+
+    @Test
+    public void testBatchSendOpMessage_drainedContextPreservesPendingDeadline() {
+        queueTransactionMsgService.close();
+        TransactionalMessageServiceImpl service = (TransactionalMessageServiceImpl) queueTransactionMsgService;
+        brokerController.getBrokerConfig().setTransactionOpBatchInterval(60000);
+        service.getDeleteContext().put(0, new MessageQueueOpContext(0, 1));
+        long lastWriteTimestamp = System.currentTimeMillis() - 30000;
+        MessageQueueOpContext pendingContext = new MessageQueueOpContext(lastWriteTimestamp, 1);
+        pendingContext.getContextQueue().add("1,");
+        pendingContext.getTotalSize().set(2);
+        service.getDeleteContext().put(1, pendingContext);
+
+        assertThat(service.batchSendOpMessage()).isEqualTo(lastWriteTimestamp + 60000);
+        assertThat(pendingContext.getContextQueue()).containsExactly("1,");
+        verify(bridge, never()).writeOp(any(Integer.class), any(Message.class));
     }
 
     @Test
